@@ -49,7 +49,7 @@ def process_real_video(job_id: str, url: str):
             
         # 2. LA IA DE GEMINI CREA EL CLIP
         if GEMINI_KEY:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-pro')
             prompt = f"""
             Actúa como un experto en redes sociales. Tengo este video:
             Título: {video_title}
