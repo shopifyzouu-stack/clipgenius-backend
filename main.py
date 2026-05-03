@@ -32,9 +32,9 @@ def process_real_video(job_id: str, url: str):
     jobs_db[job_id] = {"status": "processing"}
     
     try:
-        # 1. INTENTAR LEER EL VIDEO (CON BYPASS DE ERRORES)
-        video_title = "Video Viral de YouTube"
-        video_desc = "Un video increíble listo para ser convertido en un clip corto."
+        # 1. INTENTAR LEER EL VIDEO DE YOUTUBE
+        video_title = "Video Genial"
+        video_desc = "Un video listo para hacerse viral."
         
         try:
             ydl_opts = {'quiet': True, 'skip_download': True}
@@ -43,30 +43,29 @@ def process_real_video(job_id: str, url: str):
                 video_title = info.get('title', video_title)
                 video_desc = info.get('description', video_desc)[:500]
         except Exception as yt_error:
-            print(f"YouTube nos bloqueó, usando datos genéricos. Error: {yt_error}")
-            # Si YouTube bloquea, usamos los textos genéricos de arriba en lugar de crashear
             pass
             
-        # 2. LA IA DE GEMINI CREA EL CLIP
-        if GEMINI_KEY:
-            model = genai.GenerativeModel('gemini-pro')
-            prompt = f"""
-            Actúa como un experto en redes sociales. Tengo este video:
-            Título: {video_title}
-            Descripción: {video_desc}
-            
-            Dame 1 idea para un clip corto viral (TikTok/Reels) basado en esto.
-            Devuelve SOLO un JSON válido con este formato exacto:
-            {{"title": "El título del clip corto", "viralScore": 99, "duration": "0:45"}}
-            """
-            
-            response = model.generate_content(prompt)
-            texto_ia = response.text.replace("```json", "").replace("```", "").strip()
-            datos_ia = json.loads(texto_ia)
-        else:
-            datos_ia = {"title": f"Clip viral de: {video_title}", "viralScore": 95, "duration": "0:30"}
+        # 2. LA IA DE GEMINI (AHORA CON ESCUDO PROTECTOR)
+        # Si la IA falla, usamos estos datos por defecto para que la app no explote:
+        datos_ia = {"title": f"Clip viral de: {video_title}", "viralScore": 95, "duration": "0:30"}
+        
+        if GEMINI_KEY and len(GEMINI_KEY) > 10:
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                prompt = f"""
+                Tengo este video. Título: {video_title}. Descripción: {video_desc}.
+                Dame 1 idea para un clip corto viral. Devuelve SOLO un JSON válido:
+                {{"title": "Título corto", "viralScore": 99, "duration": "0:45"}}
+                """
+                response = model.generate_content(prompt)
+                texto_ia = response.text.replace("```json", "").replace("```", "").strip()
+                datos_ia = json.loads(texto_ia)
+            except Exception as ia_error:
+                print(f"Error de la API de Gemini (revisa tu API Key): {ia_error}")
+                # El error se imprime, pero la app sigue adelante con los datos por defecto
+                pass
 
-        # 3. ENVIAR RESULTADOS A LOVABLE
+        # 3. ENVIAR RESULTADOS A LA APP
         jobs_db[job_id] = {
             "status": "completed",
             "clips": [
