@@ -32,49 +32,70 @@ def process_real_video(job_id: str, url: str):
     jobs_db[job_id] = {"status": "processing"}
     
     try:
-        # 1. INTENTAR LEER EL VIDEO DE YOUTUBE
-        video_title = "Video Genial"
-        video_desc = "Un video listo para hacerse viral."
+        video_title = "Video Viral"
+        video_desc = ""
+        video_id = ""
         
+        # 1. LEER EL VIDEO Y SACAR SU ID
         try:
             ydl_opts = {'quiet': True, 'skip_download': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 video_title = info.get('title', video_title)
-                video_desc = info.get('description', video_desc)[:500]
+                video_desc = info.get('description', '')[:500]
+                video_id = info.get('id', '')
         except Exception as yt_error:
-            pass
+            print(f"Error leyendo YT: {yt_error}")
             
-        # 2. LA IA DE GEMINI (AHORA CON ESCUDO PROTECTOR)
-        # Si la IA falla, usamos estos datos por defecto para que la app no explote:
-        datos_ia = {"title": f"Clip viral de: {video_title}", "viralScore": 95, "duration": "0:30"}
+        # Si por algún motivo yt-dlp no saca el ID, lo intentamos sacar de la URL a la fuerza
+        if not video_id and "v=" in url:
+            video_id = url.split("v=")[1][:11]
+            
+        # 2. GEMINI DECIDE EL RECORTE (SEGUNDOS EXACTOS)
+        datos_ia = {
+            "title": f"Clip de: {video_title}", 
+            "viralScore": 95, 
+            "startTime": 30, # Por defecto empieza en el segundo 30
+            "endTime": 60    # Por defecto termina en el 60
+        }
         
         if GEMINI_KEY and len(GEMINI_KEY) > 10:
             try:
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                model = genai.GenerativeModel('gemini-pro')
                 prompt = f"""
-                Tengo este video. Título: {video_title}. Descripción: {video_desc}.
-                Dame 1 idea para un clip corto viral. Devuelve SOLO un JSON válido:
-                {{"title": "Título corto", "viralScore": 99, "duration": "0:45"}}
+                Analiza este video. Título: {video_title}. Descripción: {video_desc}.
+                Encuentra el momento con más potencial viral para un clip corto.
+                Devuelve SOLO un JSON con este formato exacto:
+                {{"title": "Título del clip", "viralScore": 99, "startTime": 15, "endTime": 45}}
+                NOTA: startTime y endTime deben ser números enteros (segundos). El clip debe durar entre 15 y 60 segundos.
                 """
                 response = model.generate_content(prompt)
                 texto_ia = response.text.replace("```json", "").replace("```", "").strip()
-                datos_ia = json.loads(texto_ia)
+                datos_parsed = json.loads(texto_ia)
+                
+                # Actualizamos con lo que pensó la IA
+                datos_ia["title"] = datos_parsed.get("title", datos_ia["title"])
+                datos_ia["viralScore"] = datos_parsed.get("viralScore", datos_ia["viralScore"])
+                datos_ia["startTime"] = int(datos_parsed.get("startTime", 30))
+                datos_ia["endTime"] = int(datos_parsed.get("endTime", 60))
             except Exception as ia_error:
-                print(f"Error de la API de Gemini (revisa tu API Key): {ia_error}")
-                # El error se imprime, pero la app sigue adelante con los datos por defecto
+                print(f"Error IA: {ia_error}")
                 pass
 
-        # 3. ENVIAR RESULTADOS A LA APP
+        # 3. CREAMOS EL ENLACE DEL CLIP RECORTADO
+        # Usamos el formato "embed" de YouTube pasándole el inicio y el fin
+        clip_url = f"https://www.youtube.com/embed/{video_id}?start={datos_ia['startTime']}&end={datos_ia['endTime']}&autoplay=1"
+
+        # 4. ENVIAR A LOVABLE
         jobs_db[job_id] = {
             "status": "completed",
             "clips": [
                 {
                     "id": f"clip_{job_id}",
-                    "title": datos_ia.get("title", video_title),
-                    "viralScore": datos_ia.get("viralScore", 90),
-                    "duration": datos_ia.get("duration", "0:30"),
-                    "videoUrl": url 
+                    "title": datos_ia["title"],
+                    "viralScore": datos_ia["viralScore"],
+                    "duration": f"{datos_ia['endTime'] - datos_ia['startTime']}s",
+                    "videoUrl": clip_url 
                 }
             ]
         }
