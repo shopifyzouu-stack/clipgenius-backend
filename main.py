@@ -45,59 +45,64 @@ def process_real_video(job_id: str, url: str):
                 video_desc = info.get('description', '')[:500]
                 video_id = info.get('id', '')
         except Exception as yt_error:
-            print(f"Error leyendo YT: {yt_error}")
+            pass
             
-        # Si por algún motivo yt-dlp no saca el ID, lo intentamos sacar de la URL a la fuerza
         if not video_id and "v=" in url:
             video_id = url.split("v=")[1][:11]
             
-        # 2. GEMINI DECIDE EL RECORTE (SEGUNDOS EXACTOS)
-        datos_ia = {
-            "title": f"Clip de: {video_title}", 
-            "viralScore": 95, 
-            "startTime": 30, # Por defecto empieza en el segundo 30
-            "endTime": 60    # Por defecto termina en el 60
-        }
+        # 2. GEMINI DECIDE 3 RECTORTES VIRALES
+        clips_finales = []
         
         if GEMINI_KEY and len(GEMINI_KEY) > 10:
             try:
                 model = genai.GenerativeModel('gemini-pro')
                 prompt = f"""
                 Analiza este video. Título: {video_title}. Descripción: {video_desc}.
-                Encuentra el momento con más potencial viral para un clip corto.
-                Devuelve SOLO un JSON con este formato exacto:
-                {{"title": "Título del clip", "viralScore": 99, "startTime": 15, "endTime": 45}}
-                NOTA: startTime y endTime deben ser números enteros (segundos). El clip debe durar entre 15 y 60 segundos.
+                Encuentra los 3 mejores momentos con potencial viral para clips cortos de TikTok/Reels.
+                Devuelve SOLO un JSON con un array llamado 'clips' que contenga 3 objetos. 
+                Formato exacto:
+                {{
+                  "clips": [
+                    {{"title": "Título 1", "viralScore": 99, "startTime": 15, "endTime": 45}},
+                    {{"title": "Título 2", "viralScore": 85, "startTime": 120, "endTime": 160}},
+                    {{"title": "Título 3", "viralScore": 75, "startTime": 300, "endTime": 330}}
+                  ]
+                }}
                 """
                 response = model.generate_content(prompt)
                 texto_ia = response.text.replace("```json", "").replace("```", "").strip()
                 datos_parsed = json.loads(texto_ia)
                 
-                # Actualizamos con lo que pensó la IA
-                datos_ia["title"] = datos_parsed.get("title", datos_ia["title"])
-                datos_ia["viralScore"] = datos_parsed.get("viralScore", datos_ia["viralScore"])
-                datos_ia["startTime"] = int(datos_parsed.get("startTime", 30))
-                datos_ia["endTime"] = int(datos_parsed.get("endTime", 60))
+                lista_ia = datos_parsed.get("clips", [])
+                
+                for idx, clip in enumerate(lista_ia):
+                    inicio = int(clip.get("startTime", 0))
+                    fin = int(clip.get("endTime", 30))
+                    clips_finales.append({
+                        "id": f"clip_{job_id}_{idx}",
+                        "title": clip.get("title", f"Clip {idx+1}"),
+                        "viralScore": clip.get("viralScore", 80),
+                        "duration": f"{fin - inicio}s",
+                        "videoUrl": f"https://www.youtube.com/embed/{video_id}?start={inicio}&end={fin}&autoplay=0"
+                    })
             except Exception as ia_error:
                 print(f"Error IA: {ia_error}")
                 pass
 
-        # 3. CREAMOS EL ENLACE DEL CLIP RECORTADO
-        # Usamos el formato "embed" de YouTube pasándole el inicio y el fin
-        clip_url = f"https://www.youtube.com/embed/{video_id}?start={datos_ia['startTime']}&end={datos_ia['endTime']}&autoplay=1"
+        # Fallback si la IA falla
+        if not clips_finales:
+            clips_finales.append({
+                "id": f"clip_{job_id}_0",
+                "title": f"Clip 1 de: {video_title}",
+                "viralScore": 90,
+                "duration": "30s",
+                "videoUrl": f"https://www.youtube.com/embed/{video_id}?start=30&end=60&autoplay=0"
+            })
 
-        # 4. ENVIAR A LOVABLE
+        # 3. ENVIAR A LOVABLE
         jobs_db[job_id] = {
             "status": "completed",
-            "clips": [
-                {
-                    "id": f"clip_{job_id}",
-                    "title": datos_ia["title"],
-                    "viralScore": datos_ia["viralScore"],
-                    "duration": f"{datos_ia['endTime'] - datos_ia['startTime']}s",
-                    "videoUrl": clip_url 
-                }
-            ]
+            "clips": clips_finales
         }
 
     except Exception as e:
